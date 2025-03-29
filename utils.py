@@ -6,12 +6,14 @@ import matplotlib.pyplot as plt
 
 
 def resumetable(df):
-    print(f"Dataset Shape: {df.shape}")
+    sh = df.shape
+    print(f"Dataset Shape: {sh}")
     summary = pd.DataFrame(df.dtypes,columns=['dtypes'])
     summary = summary.reset_index()
     summary['Name'] = summary['index']
     summary = summary[['Name','dtypes']]
-    summary['Missing'] = df.isnull().sum().values    
+    summary['Missing'] = df.isnull().sum().values
+    summary['% of Missing'] = summary['Missing'].apply(lambda x: f"{x / sh[0]:.2%}")
     summary['Uniques'] = df.nunique().values
     summary['First Value'] = df.loc[0].values
     summary['Second Value'] = df.loc[1].values
