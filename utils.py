@@ -54,10 +54,12 @@ def plot_dist(data, col):
 
     total = len(data)
 
+    order = data[col].unique()
+
     plt.figure(figsize=(16,6))
     plt.suptitle(f"{col} Distribution", fontsize = 20)
     plt.subplot(1,2,1)
-    p1 = sns.countplot(data= data, x = col, hue = col)
+    p1 = sns.countplot(data= data, x = col, hue = col, order= order)
     p1.set_title(f"{col} Dist")
     p1.set_xlabel(f"{col} Categroy Name")
     for p in p1.patches:
@@ -69,7 +71,7 @@ def plot_dist(data, col):
                     ha = "center", fontsize = 12)
 
     plt.subplot(1,2,2)
-    p2 = sns.countplot(data= data, x = col, hue= "isFraud")
+    p2 = sns.countplot(data= data, x = col, hue= "isFraud", order= order)
     p2.set_title(f"{col} Dist by Target")
     p2.set_xlabel(f"{col} Categroy Name")
     for p in p2.patches:
@@ -85,5 +87,5 @@ def plot_dist(data, col):
     tmp.rename(columns={0:'NoFraud', 1:'Fraud'}, inplace=True)
 
     pt = p2.twinx()
-    pt = sns.pointplot(data = tmp, x = col, y = "Fraud", color= "black", alpha = 0.5)
+    pt = sns.pointplot(data = tmp, x = col, y = "Fraud", color= "black", alpha = 0.5, order=order)
     pt.set_ylabel("% of Fraud")
