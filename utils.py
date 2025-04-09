@@ -3,6 +3,13 @@ import numpy as np
 from scipy import stats
 import seaborn as sns
 import matplotlib.pyplot as plt
+from sklearn.metrics import (accuracy_score, roc_auc_score, 
+                             classification_report, precision_recall_curve, 
+                             auc, confusion_matrix, f1_score)
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+from catboost import CatBoostClassifier
+
 
 
 def resumetable(df):
@@ -21,32 +28,6 @@ def resumetable(df):
 
     return summary
 
-
-def CalcOutliers(df_num): 
-
-    # calculating mean and std of the array
-    data_mean, data_std = np.mean(df_num), np.std(df_num)
-
-    # seting the cut line to both higher and lower values
-    # You can change this value
-    cut = data_std * 3
-
-    #Calculating the higher and lower cut values
-    lower, upper = data_mean - cut, data_mean + cut
-
-    # creating an array of lower, higher and total outlier values 
-    outliers_lower = [x for x in df_num if x < lower]
-    outliers_higher = [x for x in df_num if x > upper]
-    outliers_total = [x for x in df_num if x < lower or x > upper]
-
-    # array without outlier values
-    outliers_removed = [x for x in df_num if x > lower and x < upper]
-    
-    print('Identified lowest outliers: %d' % len(outliers_lower)) 
-    print('Identified upper outliers: %d' % len(outliers_higher)) 
-    print('Total outlier observations: %d' % len(outliers_total)) 
-    print('Non-outlier observations: %d' % len(outliers_removed)) 
-    print("Total percentual of Outliers: ", round((len(outliers_total) / len(outliers_removed) )*100, 4)) 
     
     return
 
@@ -89,3 +70,167 @@ def plot_dist(data, col):
     pt = p2.twinx()
     pt = sns.pointplot(data = tmp, x = col, y = "Fraud", color= "black", alpha = 0.5, order=order)
     pt.set_ylabel("% of Fraud")
+
+
+def evaluate_boosting_models(X_train, X_test, y_train, y_test, 
+                                      threshold=0.5,
+                                      xgb_params=None, lgb_params=None, cat_params=None,
+                                      models_to_run=["XGBoost", "LightGBM", "CatBoost"],
+                                      plot_pr_curve=True, train_output = False,
+                                      random_state=1234):
+    """
+    세 boosting 모델(XGBoost, LightGBM, CatBoost)을 학습시키고,  
+    성능 평가표(accuracy, roc-auc, pr-AUC, precision/recall 테이블, confusion matrix, f1 score) 및 precision-recall curve를 출력하는 함수.
+
+    Parameters
+    ----------
+    X_train : array-like, shape (n_samples, n_features)
+        학습 데이터의 피처.
+    X_test : array-like, shape (n_samples, n_features)
+        테스트 데이터의 피처.
+    y_train : array-like, shape (n_samples,)
+        학습 데이터의 타깃.
+    y_test : array-like, shape (n_samples,)
+        테스트 데이터의 타깃.
+
+    threshold : float, optional (default=0.5)
+        확률 예측을 분류 레이블로 변환할 임계치.
+
+    # 파라미터 전달은 딕셔너리 형태로
+
+    xgb_params : dict, optional
+        XGBoost classifier에 전달할 하이퍼파라미터 (default: 기본값).
+    lgb_params : dict, optional
+        LightGBM classifier에 전달할 하이퍼파라미터 (default: 기본값).
+    cat_params : dict, optional
+        CatBoost classifier에 전달할 하이퍼파라미터 (default: 기본값, verbose=0 설정 포함).
+
+
+    plot_pr_curve : bool, optional (default=True)
+        Precision-recall curve를 시각화할지 여부.
+    random_state : int, optional (default=1234)
+        랜덤시드.
+
+    Returns
+    -------
+    results_df : pd.DataFrame
+        각 모델의 평가 지표(accuracy, roc-auc, pr_auc, f1 score)를 정리한 DataFrame.
+    porb_list : list
+        pr-curve 그래프를 그리기 위한 예측확률 리스트
+    """
+
+    if xgb_params is None:
+        xgb_params = {'eval_metric': 'logloss', 'random_state': random_state}
+    if lgb_params is None:
+        lgb_params = {'random_state': random_state}
+    if cat_params is None:
+        cat_params = {'verbose': 0, 'random_seed': random_state}
+
+    all_models = {
+        "XGBoost": XGBClassifier(**xgb_params),
+        "LightGBM": LGBMClassifier(**lgb_params),
+        "CatBoost": CatBoostClassifier(**cat_params)
+    }
+
+    results = []
+    prob_list = []
+
+    if plot_pr_curve:
+        plt.figure(figsize=(8, 6))
+
+    for name in models_to_run:
+        if name not in all_models:
+            continue
+
+        model = all_models[name]
+        print(f"\n====== {name} ======")
+        model.fit(X_train, y_train)
+
+        if train_output:
+            ## train data 평가지표
+            y_prob_train = model.predict_proba(X_train)[:, 1]
+            y_pred_train = (y_prob_train >= threshold).astype(int)
+
+            acc_train = accuracy_score(y_train, y_pred_train)
+            roc_auc_train = roc_auc_score(y_train, y_prob_train)
+            f1_train = f1_score(y_train, y_pred_train)
+            precision_train, recall_train, _ = precision_recall_curve(y_train, y_prob_train)
+            pr_auc_train = auc(recall_train, precision_train)
+
+            print("\n=========Train data Information=========")
+            print("Accuracy: {:.4f}".format(acc_train))
+            print("ROC-AUC: {:.4f}".format(roc_auc_train))
+            print("F1 Score: {:.4f}".format(f1_train))
+            print("PR-AUC: {:.4f}".format(pr_auc_train))
+
+            print("\nClassification Report on train data:\n", classification_report(y_train, y_pred_train))
+
+            # Confusion Matrix 표 형태로 출력
+            cm = confusion_matrix(y_train, y_pred_train)
+            cm_df = pd.DataFrame(cm, index=['Actual 0', 'Actual 1'], columns=['Pred 0', 'Pred 1'])
+            print("\nConfusion Matrix:")
+            print(cm_df)
+
+        # test 데이터 평가지표
+        y_prob = model.predict_proba(X_test)[:, 1]
+        prob_list.append(y_prob)
+        y_pred = (y_prob >= threshold).astype(int)
+
+        acc = accuracy_score(y_test, y_pred)
+        roc_auc = roc_auc_score(y_test, y_prob)
+        f1 = f1_score(y_test, y_pred)
+        precision, recall, _ = precision_recall_curve(y_test, y_prob)
+        pr_auc = auc(recall, precision)
+
+        print("\n\n=========Test data Information=========")
+        print("Accuracy: {:.4f}".format(acc))
+        print("ROC-AUC: {:.4f}".format(roc_auc))
+        print("F1 Score: {:.4f}".format(f1))
+        print("PR-AUC: {:.4f}".format(pr_auc))
+
+        print("\nClassification Report on test data:\n", classification_report(y_test, y_pred))
+
+        # Confusion Matrix 표 형태로 출력
+        cm = confusion_matrix(y_test, y_pred)
+        cm_df = pd.DataFrame(cm, index=['Actual 0', 'Actual 1'], columns=['Pred 0', 'Pred 1'])
+        print("\nConfusion Matrix:")
+        print(cm_df)
+
+        if plot_pr_curve:
+            plt.plot(recall, precision, lw=2, label=f'{name} (PR-AUC = {pr_auc:.4f})')
+
+        results.append({
+            'Model': name,
+            'Accuracy': acc,
+            'ROC-AUC': roc_auc,
+            'F1 Score': f1,
+            'PR-AUC': pr_auc
+        })
+
+    if plot_pr_curve:
+        plt.xlabel("Recall")
+        plt.ylabel("Precision")
+        plt.title("Precision-Recall Curve")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+    results_df = pd.DataFrame(results).set_index('Model')
+    return results_df, prob_list
+
+
+def pr_curve(y_true, y_prob_list):
+
+    data = ["XGBClassifier", "LGBMClassifier", "CatBoostClassifier"]
+    for i, y_prob in enumerate(y_prob_list):
+
+
+        precisions, recalls, thresholds = precision_recall_curve(y_true, y_prob)
+        plt.figure(figsize=(8,6))
+        plt.plot(thresholds, precisions[:-1], label='Precision')
+        plt.plot(thresholds, recalls[:-1], label='Recall')
+        plt.xlabel("Threshold")
+        plt.legend()
+        plt.title(f'Precision-Recall vs Threshold on {data[i]}')
+        plt.grid(True)
+        plt.show()
