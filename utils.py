@@ -73,11 +73,12 @@ def plot_dist(data, col):
 
 
 def evaluate_boosting_models(X_train, X_test, y_train, y_test, 
-                                      threshold=0.5,
-                                      xgb_params=None, lgb_params=None, cat_params=None,
-                                      models_to_run=["XGBoost", "LightGBM", "CatBoost"],
-                                      plot_pr_curve=True, train_output = False,
-                                      random_state=1234):
+                             threshold=0.5,
+                             xgb_params=None, lgb_params=None, cat_params=None,
+                             models_to_run=["XGBoost", "LightGBM", "CatBoost"],
+                             plot_pr_curve=True, 
+                             train_output = False,
+                             random_state=1234):
     """
     세 boosting 모델(XGBoost, LightGBM, CatBoost)을 학습시키고,  
     성능 평가표(accuracy, roc-auc, pr-AUC, precision/recall 테이블, confusion matrix, f1 score) 및 precision-recall curve를 출력하는 함수.
@@ -133,8 +134,7 @@ def evaluate_boosting_models(X_train, X_test, y_train, y_test,
     }
 
     results = []
-    prob_list = []
-
+    models = []
     if plot_pr_curve:
         plt.figure(figsize=(8, 6))
 
@@ -149,7 +149,11 @@ def evaluate_boosting_models(X_train, X_test, y_train, y_test,
         if train_output:
             ## train data 평가지표
             y_prob_train = model.predict_proba(X_train)[:, 1]
-            y_pred_train = (y_prob_train >= threshold).astype(int)
+            if name == "CatBoost":
+                model.set_probability_threshold(threshold)
+                y_pred_train = model.predict(X_train)
+            else:
+                y_pred_train = (y_prob_train >= threshold).astype(int)
 
             acc_train = accuracy_score(y_train, y_pred_train)
             roc_auc_train = roc_auc_score(y_train, y_prob_train)
@@ -173,8 +177,11 @@ def evaluate_boosting_models(X_train, X_test, y_train, y_test,
 
         # test 데이터 평가지표
         y_prob = model.predict_proba(X_test)[:, 1]
-        prob_list.append(y_prob)
-        y_pred = (y_prob >= threshold).astype(int)
+        if name == "CatBoost":
+                model.set_probability_threshold(threshold)
+                y_pred = model.predict(X_test)
+        else:
+                y_pred = (y_prob >= threshold).astype(int)
 
         acc = accuracy_score(y_test, y_pred)
         roc_auc = roc_auc_score(y_test, y_prob)
@@ -207,6 +214,8 @@ def evaluate_boosting_models(X_train, X_test, y_train, y_test,
             'PR-AUC': pr_auc
         })
 
+        models.append(model)
+
     if plot_pr_curve:
         plt.xlabel("Recall")
         plt.ylabel("Precision")
@@ -216,21 +225,38 @@ def evaluate_boosting_models(X_train, X_test, y_train, y_test,
         plt.show()
 
     results_df = pd.DataFrame(results).set_index('Model')
-    return results_df, prob_list
+    return results_df, models
 
 
-def pr_curve(y_true, y_prob_list):
+def pr_curve(X,y_true, models):
 
-    data = ["XGBClassifier", "LGBMClassifier", "CatBoostClassifier"]
-    for i, y_prob in enumerate(y_prob_list):
-
-
+    for model in models:
+        y_prob = model.predict_proba(X)[:, 1]
         precisions, recalls, thresholds = precision_recall_curve(y_true, y_prob)
         plt.figure(figsize=(8,6))
         plt.plot(thresholds, precisions[:-1], label='Precision')
         plt.plot(thresholds, recalls[:-1], label='Recall')
         plt.xlabel("Threshold")
         plt.legend()
-        plt.title(f'Precision-Recall vs Threshold on {data[i]}')
+        plt.title(f'Precision-Recall vs Threshold on {model.__class__.__name__}')
         plt.grid(True)
         plt.show()
+
+
+def plot_feature_importance(importance, features, top_n=20, figsize=(10, 8), title="Feature Importance"):
+    # 데이터프레임으로 정리
+    feat_imp_df = pd.DataFrame({
+        'Feature': features,
+        'Importance': importance
+    })
+
+    # 중요도 내림차순 정렬
+    feat_imp_df = feat_imp_df.sort_values(by="Importance", ascending=False).head(top_n)
+
+    # 시각화
+    plt.figure(figsize=figsize)
+    plt.barh(feat_imp_df['Feature'][::-1], feat_imp_df['Importance'][::-1])  # 상위부터 아래로
+    plt.xlabel("Importance")
+    plt.title(title)
+    plt.tight_layout()
+    plt.show()
